@@ -46,8 +46,20 @@ def moon_events(start_date_str, end_date_str):
 # -----------------------
 @st.cache_data(show_spinner=False)
 def load_price_data(ticker, start, end):
-    df = yf.download(ticker, start=start, end=end, progress=False)[['Close']].dropna()
+    df = yf.download(
+    ticker,
+    start=start,
+    end=end,
+    progress=False,
+    auto_adjust=False,  # explicit to suppress warning and keep raw Close
+    )[['Close']].dropna()
     return df
+
+def nearest_trading_date(df, target_date):
+    """Return the index of the row in df whose 'Date' is closest to target_date (by absolute days)."""
+    diffs = (df["Date"].dt.normalize() - pd.Timestamp(target_date)).abs()
+    return diffs.idxmin()
+
 
 # -----------------------
 # Backtest logic
@@ -63,7 +75,6 @@ def run_backtest(df, new_moons, full_moons, initial_cash, stop_loss, take_profit
     # Assign boolean columns
     data['FullMoon'] = dates.apply(lambda x: x in full_moon_dates)
     data['NewMoon'] = dates.apply(lambda x: x in new_moon_dates)
-    st.write(data[['FullMoon', 'NewMoon']].head(10))
 
 
 
@@ -75,7 +86,7 @@ def run_backtest(df, new_moons, full_moons, initial_cash, stop_loss, take_profit
 
     for i in range(len(data)):
         dt = data.index[i]
-        price = float(data['Close'].iloc[i])
+        price = float(data['Close'].iloc[i].item())
         is_full = bool(data['FullMoon'].iloc[i])
         is_new = bool(data['NewMoon'].iloc[i])
 
@@ -319,7 +330,101 @@ for ticker in tickers:
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        # Do not render the base fig; we will render the dynamic one below
+
+        # -----------------------
+        # Interactive Moon Selection Table + Dynamic Highlight
+        # -----------------------
+        
+        
+
+        st.subheader("🔍 Explore Moon Events (Interactive)")
+        moon_table = equity_df[['Date', 'Close']].copy()
+        moon_table['FullMoon'] = moon_table['Date'].dt.date.isin(fm_dates)
+        moon_table['NewMoon'] = moon_table['Date'].dt.date.isin(nm_dates)
+        # make sure Streamlit treats them as boolean checkboxes
+        moon_table = moon_table.astype({'FullMoon': 'bool', 'NewMoon': 'bool'})
+
+        selected_table = st.data_editor(
+            moon_table,
+            key=f"moon_table_{ticker}",
+            hide_index=True,
+            column_config={
+                "FullMoon": st.column_config.CheckboxColumn(
+                    "FullMoon", help="Select to highlight", default=False
+                ),
+                "NewMoon": st.column_config.CheckboxColumn(
+                    "NewMoon", help="Select to highlight", default=False
+                ),
+            },
+            disabled=False,
+            width="stretch",  # use_container_width deprecated
+        )
+
+        # Extract selections safely
+        if 'FullMoon' in selected_table.columns:
+            selected_fm = selected_table.loc[selected_table['FullMoon'] == True, 'Date'].dt.date.tolist()
+        else:
+            selected_fm = []
+
+        if 'NewMoon' in selected_table.columns:
+            selected_nm = selected_table.loc[selected_table['NewMoon'] == True, 'Date'].dt.date.tolist()
+        else:
+            selected_nm = []
+
+
+        # Build highlight figure from the base chart
+        highlight_fig = go.Figure(fig)
+        
+        # Highlight selected Full Moons
+        if selected_fm:
+            highlight_points = []
+            for d in selected_fm:
+                idx = nearest_trading_date(equity_df, d)
+                highlight_points.append((equity_df.loc[idx, "Date"], equity_df.loc[idx, "Close"]))
+
+            if highlight_points:
+                highlight_fig.add_trace(go.Scatter(
+                    x=[x for x, _ in highlight_points],
+                    y=[y for _, y in highlight_points],
+                    mode="markers",
+                    marker_symbol="triangle-up",
+                    marker_color="lime",
+                    marker_size=14,
+                    name="Selected Full Moon",
+                    yaxis="y1",
+                ))
+
+        # Highlight selected New Moons
+        if selected_nm:
+            highlight_points = []
+            for d in selected_nm:
+                idx = nearest_trading_date(equity_df, d)
+                highlight_points.append((equity_df.loc[idx, "Date"], equity_df.loc[idx, "Close"]))
+
+            if highlight_points:
+                highlight_fig.add_trace(go.Scatter(
+                    x=[x for x, _ in highlight_points],
+                    y=[y for _, y in highlight_points],
+                    mode="markers",
+                    marker_symbol="triangle-down",
+                    marker_color="orange",
+                    marker_size=14,
+                    name="Selected New Moon",
+                    yaxis="y1",
+                ))
+
+
+        # Render only the dynamic figure
+        st.plotly_chart(highlight_fig, use_container_width=True, config={"displaylogo": False})
+
+        st.download_button(
+            "💾 Download selected moon table CSV",
+            data=selected_table.to_csv(index=False),
+            file_name=f"{ticker}_moon_selections.csv",
+            mime="text/csv"
+        )
+
 
         # trades table
         trades_df = pd.DataFrame(best_display['trades'])

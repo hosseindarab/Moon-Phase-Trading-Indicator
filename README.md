@@ -9,13 +9,14 @@ Visualize how lunar phases align with market prices. This Streamlit app plots Fu
 - Lunar markers
   - Past and upcoming Full/New Moons
   - Future markers pinned at the latest price (▲ green Full Moon, ▼ red New Moon)
+  - Moon events are snapped to the nearest trading day to ensure markers appear on the chart
 - Dual y-axes
   - Left: Price
   - Right: Portfolio Value (overlay)
 - Trades table
   - Most recent first with dates normalized to day
 - Interactive Plotly chart embedded in Streamlit
-- Global results summary at the end of the app
+- Global results summary section at the end of the app
 
 ## Quickstart
 
@@ -51,7 +52,7 @@ streamlit run moon_trading_app.py
 - Pick a ticker and date range in the UI
 - Review the price series with lunar markers (past + future)
 - Compare left-axis Price vs right-axis Portfolio Value
-- Review the Trades table (newest first)
+- Use the Moon Events table to toggle highlights (Select Full/New Moon)
 - Check the global summary at the bottom for aggregate results
 
 ## Project layout
@@ -62,4 +63,5 @@ streamlit run moon_trading_app.py
 ## Notes
 - Requires internet access to fetch market data
 - Future moon markers indicate timing only; they do not predict price
+- Moon events are snapped to the nearest trading day for plotting/backtests
 - If fonts or icons don’t display, ensure Plotly renders via Streamlit (disable ad/script blockers if needed)
