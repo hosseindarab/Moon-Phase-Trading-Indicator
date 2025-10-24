@@ -15,6 +15,7 @@ from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
+import requests
 
 st.set_page_config(layout="wide", page_title="Moon Phase Trading Lab 🌙")
 
@@ -54,6 +55,48 @@ def load_price_data(ticker, start, end):
     auto_adjust=False,  # explicit to suppress warning and keep raw Close
     )[['Close']].dropna()
     return df
+
+# -----------------------
+# Helper: fetch Fear and Greed Index data
+# -----------------------
+@st.cache_data(show_spinner=False, ttl=3600)  # cache for 1 hour
+def fetch_fear_greed_data(limit=100):
+    """Fetch Fear and Greed Index data from CoinMarketCap API."""
+    url = "https://pro-api.coinmarketcap.com/v3/fear-and-greed/historical"
+    headers = {
+        'X-CMC_PRO_API_KEY': '8e705997255b4be89255f44602a22b9f',
+        'Accept': 'application/json'
+    }
+    params = {
+        'limit': limit
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get('status', {}).get('error_code') != 0:
+            error_msg = data.get('status', {}).get('error_message', 'Unknown error')
+            st.error(f"API Error: {error_msg}")
+            return pd.DataFrame()
+        
+        # Parse the data
+        records = data.get('data', [])
+        if not records:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(records)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.sort_values('timestamp')
+        
+        return df
+    except requests.exceptions.RequestException as e:
+        st.error(f"Failed to fetch Fear and Greed Index data: {str(e)}")
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error processing Fear and Greed Index data: {str(e)}")
+        return pd.DataFrame()
 
 def nearest_trading_date(df, target_date):
     """Return the index of the row in df whose 'Date' is closest to target_date (by absolute days)."""
@@ -178,6 +221,82 @@ st.write("Interactive exploration of the strategy: **Buy on Full Moon**, **Sell 
 if start_date >= end_date:
     st.error("Start date must be earlier than end date.")
     st.stop()
+
+# -----------------------
+# Fear and Greed Index Section
+# -----------------------
+st.header("📊 Crypto Fear and Greed Index")
+st.write("Current market sentiment from CoinMarketCap. Lower values indicate fear, higher values indicate greed.")
+
+with st.spinner("Fetching Fear and Greed Index data..."):
+    fg_data = fetch_fear_greed_data(limit=100)
+
+if not fg_data.empty:
+    # Create Fear and Greed chart
+    fig_fg = go.Figure()
+    
+    # Add line trace with color gradient based on value
+    fig_fg.add_trace(go.Scatter(
+        x=fg_data['timestamp'],
+        y=fg_data['value'],
+        mode='lines+markers',
+        name='Fear & Greed Index',
+        line=dict(color='rgba(75, 192, 192, 1)', width=2),
+        marker=dict(size=6),
+        hovertemplate='<b>Date</b>: %{x}<br>' +
+                      '<b>Value</b>: %{y}<br>' +
+                      '<b>Classification</b>: %{text}<br>' +
+                      '<extra></extra>',
+        text=fg_data['value_classification']
+    ))
+    
+    # Add color zones
+    fig_fg.add_hrect(y0=0, y1=25, fillcolor="red", opacity=0.1, line_width=0, annotation_text="Extreme Fear", annotation_position="left")
+    fig_fg.add_hrect(y0=25, y1=45, fillcolor="orange", opacity=0.1, line_width=0, annotation_text="Fear", annotation_position="left")
+    fig_fg.add_hrect(y0=45, y1=55, fillcolor="yellow", opacity=0.1, line_width=0, annotation_text="Neutral", annotation_position="left")
+    fig_fg.add_hrect(y0=55, y1=75, fillcolor="lightgreen", opacity=0.1, line_width=0, annotation_text="Greed", annotation_position="left")
+    fig_fg.add_hrect(y0=75, y1=100, fillcolor="green", opacity=0.1, line_width=0, annotation_text="Extreme Greed", annotation_position="left")
+    
+    fig_fg.update_layout(
+        title="Fear and Greed Index Over Time",
+        xaxis_title="Date",
+        yaxis_title="Index Value (0-100)",
+        yaxis=dict(range=[0, 100]),
+        hovermode='x unified',
+        height=400
+    )
+    
+    st.plotly_chart(fig_fg, use_container_width=True, config={"displaylogo": False})
+    
+    # Show latest value with metrics
+    if len(fg_data) > 0:
+        latest = fg_data.iloc[-1]
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Latest Value", f"{latest['value']:.0f}", help="Fear and Greed Index (0-100)")
+        with col2:
+            st.metric("Classification", latest['value_classification'])
+        with col3:
+            st.metric("Last Updated", latest['timestamp'].strftime('%Y-%m-%d'))
+    
+    # Option to show data table
+    with st.expander("View Fear and Greed Historical Data"):
+        display_df = fg_data.copy()
+        display_df['timestamp'] = display_df['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+        st.dataframe(display_df[['timestamp', 'value', 'value_classification']], use_container_width=True)
+        
+        # Download button for Fear and Greed data
+        csv_fg = fg_data.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            "💾 Download Fear and Greed CSV",
+            data=csv_fg,
+            file_name="fear_greed_index.csv",
+            mime="text/csv"
+        )
+else:
+    st.warning("Unable to fetch Fear and Greed Index data. Please check your internet connection or try again later.")
+
+st.markdown("---")
 
 cols = st.columns([2,1])
 
