@@ -15,6 +15,7 @@ from datetime import datetime
 import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
+import requests
 
 st.set_page_config(layout="wide", page_title="Moon Phase Trading Lab 🌙")
 
@@ -147,6 +148,84 @@ def run_backtest(df, new_moons, full_moons, initial_cash, stop_loss, take_profit
     return result
 
 # -----------------------
+# Helper: CMC Fear & Greed Index fetcher
+# -----------------------
+@st.cache_data(show_spinner=False, ttl=1800)
+def fetch_cmc_fgi(api_key: str, start: int | None = None, limit: int = 200, debug: bool = False) -> pd.DataFrame:
+    url = "https://pro-api.coinmarketcap.com/v3/fear-and-greed/historical"
+    headers = {"X-CMC_PRO_API_KEY": api_key}
+    params = {}
+    if start is not None:
+        params["start"] = int(start)
+    if limit is not None:
+        params["limit"] = int(limit)
+    r = requests.get(url, headers=headers, params=params, timeout=15)
+    r.raise_for_status()
+    payload = r.json()
+    data = payload.get("data", [])
+    if not data:
+        return pd.DataFrame(columns=["timestamp", "value", "value_classification"])
+
+    df = pd.DataFrame(data)
+
+    # Robust timestamp normalization (supports ISO strings and numeric epochs in s/ms/ns)
+    ts = df["timestamp"]
+    unit_used = "iso"
+    parsed = None
+    try:
+        if pd.api.types.is_numeric_dtype(ts):
+            vals = ts.astype("int64")
+            med = float(vals.median())
+            if med > 1e14:
+                unit_used = "ns"
+                parsed = pd.to_datetime(vals, unit="ns", utc=True, errors="coerce")
+            elif med > 1e11:
+                unit_used = "ms"
+                parsed = pd.to_datetime(vals, unit="ms", utc=True, errors="coerce")
+            else:
+                unit_used = "s"
+                parsed = pd.to_datetime(vals, unit="s", utc=True, errors="coerce")
+        else:
+            # If strings are purely digits, treat as epoch seconds
+            as_str = ts.astype(str)
+            if as_str.str.fullmatch(r"\d+").all():
+                vals = as_str.astype("int64")
+                med = float(vals.median())
+                if med > 1e14:
+                    unit_used = "ns"
+                    parsed = pd.to_datetime(vals, unit="ns", utc=True, errors="coerce")
+                elif med > 1e11:
+                    unit_used = "ms"
+                    parsed = pd.to_datetime(vals, unit="ms", utc=True, errors="coerce")
+                else:
+                    unit_used = "s"
+                    parsed = pd.to_datetime(vals, unit="s", utc=True, errors="coerce")
+            else:
+                unit_used = "iso"
+                parsed = pd.to_datetime(ts, utc=True, errors="coerce")
+    except Exception:
+        # Final fallback to coercing ISO strings
+        unit_used = "iso-fallback"
+        parsed = pd.to_datetime(ts, utc=True, errors="coerce")
+
+    df["timestamp"] = parsed.dt.tz_convert(None)
+    # Drop rows we failed to parse to avoid downstream errors
+    df = df.dropna(subset=["timestamp"])
+
+    # Coerce value to numeric and clip to [0, 100]
+    df["value"] = pd.to_numeric(df.get("value", np.nan), errors="coerce").clip(0, 100)
+
+    if debug:
+        st.write("FGI debug", {
+            "rows_total": len(data),
+            "rows_parsed": len(df),
+            "unit_used": unit_used,
+            "sample": df.head(3).to_dict(orient="records"),
+        })
+
+    return df.sort_values("timestamp")
+
+# -----------------------
 # UI: sidebar controls
 # -----------------------
 st.sidebar.title("Moon Strategy Controls")
@@ -164,6 +243,8 @@ take_profit = st.sidebar.slider("Take-profit %", 0.0, 1.0, value=0.30, step=0.01
 do_grid_search = st.sidebar.checkbox("Grid search optimize SL/TP", value=False)
 sl_grid = st.sidebar.multiselect("SL grid (if grid enabled)", options=[0.02,0.05,0.10,0.15,0.20,0.25], default=[0.05,0.10,0.15])
 tp_grid = st.sidebar.multiselect("TP grid (if grid enabled)", options=[0.10,0.20,0.30,0.40,0.50], default=[0.20,0.30,0.40])
+show_debug = st.sidebar.checkbox("Show debug info", value=False)
+cmc_api_key = st.sidebar.text_input("CMC API Key (Fear & Greed)", value="8e705997255b4be89255f44602a22b9f", type="password")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("Notes: Buy on Full Moon (🌕), Sell on New Moon (🌑). Moon times computed with the `ephem` library.")
@@ -432,6 +513,49 @@ for ticker in tickers:
             trades_df['date'] = pd.to_datetime(trades_df['date']).dt.date
             st.write("Trades (most recent first)")
             st.dataframe(trades_df.sort_values('date', ascending=False).reset_index(drop=True))
+
+# -----------------------
+# Fear & Greed Index (global section)
+# -----------------------
+with st.expander("Fear & Greed Index (CoinMarketCap)", expanded=True):
+    try:
+        fgi_df = fetch_cmc_fgi(cmc_api_key, limit=365, debug=show_debug)
+        if fgi_df.empty:
+            st.info("No Fear & Greed data returned.")
+        else:
+            # Filter to selected date range
+            start_ts = pd.to_datetime(start_date)
+            end_ts = pd.to_datetime(end_date) + pd.Timedelta(days=1)  # inclusive end
+            fgi_range = fgi_df[(fgi_df["timestamp"] >= start_ts) & (fgi_df["timestamp"] < end_ts)].copy()
+            if fgi_range.empty:
+                st.info("No Fear & Greed data in the selected date range.")
+            else:
+                # Plot
+                f = go.Figure()
+                f.add_trace(go.Scatter(
+                    x=fgi_range["timestamp"],
+                    y=fgi_range["value"],
+                    mode="lines+markers",
+                    name="FGI Value",
+                    line=dict(color="#6c5ce7"),
+                    marker=dict(size=6)
+                ))
+                f.update_layout(
+                    title="CoinMarketCap Fear & Greed Index",
+                    xaxis_title="Date",
+                    yaxis_title="Value (0-100)",
+                    yaxis=dict(range=[0, 100]),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(f, use_container_width=True, config={"displaylogo": False})
+
+                if show_debug:
+                    st.caption(f"FGI rows (range): {len(fgi_range)} of total {len(fgi_df)}")
+                    st.dataframe(fgi_range.rename(columns={"timestamp": "Date", "value": "FGI", "value_classification": "Classification"}), use_container_width=True)
+    except requests.HTTPError as e:
+        st.error(f"CMC API error: {e.response.status_code} - {e.response.text}")
+    except Exception as e:
+        st.error(f"Failed to load Fear & Greed Index: {e}")
 
 # -----------------------
 # Global results & export
