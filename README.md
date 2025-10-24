@@ -6,6 +6,11 @@ Visualize how lunar phases align with market prices. This Streamlit app plots Fu
 - Dependencies: [requirements.txt](requirements.txt)
 
 ## Features
+- **Fear and Greed Index**
+  - Real-time crypto market sentiment from CoinMarketCap API
+  - Interactive chart with color-coded zones (Extreme Fear, Fear, Neutral, Greed, Extreme Greed)
+  - Historical data view and CSV export
+  - Latest metrics display (value, classification, last update)
 - Lunar markers
   - Past and upcoming Full/New Moons
   - Future markers pinned at the latest price (▲ green Full Moon, ▼ red New Moon)
