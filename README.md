@@ -6,6 +6,11 @@ Visualize how lunar phases align with market prices. This Streamlit app plots Fu
 - Dependencies: [requirements.txt](requirements.txt)
 
 ## Features
+- **Fear and Greed Index**
+  - Real-time crypto market sentiment from CoinMarketCap API
+  - Interactive chart with color-coded zones (Extreme Fear, Fear, Neutral, Greed, Extreme Greed)
+  - Historical data view and CSV export
+  - Latest metrics display (value, classification, last update)
 - Lunar markers
   - Past and upcoming Full/New Moons
   - Future markers pinned at the latest price (▲ green Full Moon, ▼ red New Moon)
@@ -17,6 +22,10 @@ Visualize how lunar phases align with market prices. This Streamlit app plots Fu
   - Most recent first with dates normalized to day
 - Interactive Plotly chart embedded in Streamlit
 - Global results summary section at the end of the app
+- Fear & Greed Index (CoinMarketCap)
+  - Pulls historical values via CMC API
+  - Plots daily FGI (0-100) over the selected date range
+  - Sidebar field for API key
 
 ## Quickstart
 
@@ -54,6 +63,11 @@ streamlit run moon_trading_app.py
 - Compare left-axis Price vs right-axis Portfolio Value
 - Use the Moon Events table to toggle highlights (Select Full/New Moon)
 - Check the global summary at the bottom for aggregate results
+
+## Configuration
+- CoinMarketCap API key
+  - Enter your CMC key in the sidebar (defaults to a sample key provided for testing).
+  - Endpoint used: https://pro-api.coinmarketcap.com/v3/fear-and-greed/historical
 
 ## Project layout
 - App: moon_trading_app.py
